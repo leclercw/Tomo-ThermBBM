@@ -1,0 +1,150 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <fstream>
+#include <iostream>
+#include <cmath>
+#include <sys/resource.h> 
+
+#include "../PREPRO/VTK.h"
+#include "../PREPRO/genesis.h"
+#include "../PREPRO/micro.h"
+#include "../PROCESS/reso_FFT.h"
+#include "../PROCESS/ftstring.h"
+#include "../PROCESS/ctime.h"
+
+#include "view.h"
+#include "conf.h"
+
+typedef double R;
+const R Pi=3.14159265;
+
+using namespace std;
+
+int main(int argc, char *argv[])
+{
+R t1=CPUtime();
+
+// RESOLUTION 1
+string str_H1 = argv[1];
+from_string<int>(H1,str_H1,dec);
+
+// RESOLUTION 2
+string str_H2 = argv[2];
+from_string<int>(H2,str_H2,dec);
+N_TOT = H1*H2;
+cH=min(H1,H2);
+
+// DISCRETISATION X
+string str_HX = argv[3];
+from_string<int>(HX,str_HX,dec);
+
+// DISCRETISATION Y
+string str_HY = argv[4];
+from_string<int>(HY,str_HY,dec);
+
+// CONTRASTE
+string str_cont = argv[5];
+from_string<R>(cont,str_cont,dec);
+
+// Nom du fichier microstructure
+/*
+string filename = argv[6];
+string link="../../MAP/"+filename;
+const char * filename1 = link.c_str();
+*/
+
+// NOMBRE DE DISQUES
+string str_NB_DIS = argv[6];
+from_string<int>(NB_DIS,str_NB_DIS,dec);
+
+// RAPPORT D ECHELLE
+string str_R_ECH = argv[7];
+from_string<R>(R_ECH,str_R_ECH,dec);
+R_DIS=H1/(2.*R_ECH);
+
+cout<<"Nombre de Disques : "<<NB_DIS<<endl;
+cout<<"Rayon de Disques : "<<R_DIS<<endl;
+
+// ALLOCATION DYNAMIQUE
+allocat_memory_ther2D();
+
+// LECTURE DE LA GRILLE
+//readVTK2map(HX,HY,H1,H2,PR_INC,LIST_N,filename1);
+
+// GENER
+gener2_disk_alea(NB_DIS,R_DIS,N_TOT,H1,H2,LIST_N,LIST_X,LIST_Y,LIST_R);
+treat_per2(H1,H2,LIST_N);
+eval_fv(PR_INC,N_TOT,LIST_N);
+expVTK2(LIST_N,H1,H2,N_TOT,PR_INC);
+
+// DETECTION AGREGAT
+detect_agr2(H1,H2,LIST_A,LIST_N,N_TOT);
+
+// COMPACITE
+pC=PR_INC;
+cout<<"Pourcentage d inclusions après traitement: "<<PR_INC<<endl;
+
+// REPERAGE CONTOURS
+int N_SEG;
+int IN=1;
+int OUT=0;
+
+// Search contour
+search_cont(N_SEG,LIST_N,H1,H2,IN,OUT);
+nQ=N_SEG;
+
+// Treat contour
+treat_cont(N_SEG,LIST_N,LIST_Q,LIST_V,H1,H2,IN,OUT);
+
+//// HOMOGENEISATION
+
+// Caractéristiques matériaux
+// Matrice
+R K1  = 1.;
+cout <<"Conductivité thermique de la matrice: "<<K1<<endl;
+// inclusion 
+R K2  = cont;
+cout <<"Conductivité thermique de(s) inclusions(s): "<<K2<<endl;
+      
+//milieu 0
+R K0 =-sqrt(K1*K2);
+
+R K1pK0=K1+K0;
+R K2pK0=K2+K0;
+R iK1=2*K0/(K1-K0);
+R iK2=2*K0/(K2-K0);
+
+// Résolution fft2
+R flu11[2];
+R flu22[2];
+
+/*
+reso_fft2_ther_temp(LIST_N,LIST_T,H1,H2,N_TOT,K0,K1,K2,K1pK0,K2pK0,iK1,iK2,flu11,1,mintt,maxtt);
+reso_fft2_ther_temp(LIST_N,LIST_T,H1,H2,N_TOT,K0,K1,K2,K1pK0,K2pK0,iK1,iK2,flu22,2,mintt,maxtt);
+*/
+reso_fft2_ther_flux(LIST_N,LIST_FX,H1,H2,N_TOT,K0,K1,K2,K1pK0,K2pK0,iK1,iK2,flu11,1,1,minfx,maxfx);
+reso_fft2_ther_flux(LIST_N,LIST_FY,H1,H2,N_TOT,K0,K1,K2,K1pK0,K2pK0,iK1,iK2,flu22,2,2,minfy,maxfy);
+
+cout<<"Phix :"<<minfx<<", "<<maxfx<<endl;
+//cout<<"Temp :"<<mintt<<", "<<maxtt<<endl;
+
+cout<<"Conductivités thermiques estimées :"<<endl;
+cout<<"K1 : "<<flu11[0]<<endl;
+cout<<"K2 : "<<flu22[1]<<endl;
+
+R t2=CPUtime()-t1;
+cout<<"Temps de calcul CPU : "<<t2<<endl;
+
+view_init2(argc,argv);
+view_micro2_disk();
+view_micro2_agr();
+view_micro2_cont();
+//view_micro2_t();
+view_micro2_phix();
+view_micro2_phiy();
+
+// LIBERATION MEMOIRE
+free_memory_ther2D();
+
+return 1;
+}

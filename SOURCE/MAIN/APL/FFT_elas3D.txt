@@ -1,0 +1,384 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <fstream>
+#include <iostream>
+#include <cmath>
+#include <sys/resource.h> 
+
+#include "../PREPRO/VTK.h"
+#include "../PREPRO/genesis.h"
+#include "../PREPRO/micro.h"
+#include "../PROCESS/reso_FFT.h"
+#include "../PROCESS/ftstring.h"
+#include "../PROCESS/ctime.h"
+
+#include "view.h"
+#include "conf.h"
+
+typedef double R;
+const R Pi=3.14159265;
+
+using namespace std;
+
+int main(int argc, char *argv[])
+{
+R t1=CPUtime();
+
+// Nom du fichier microstructure
+//string filename = argv[1];
+//const char * filename1 = filename.c_str();
+
+// RESOLUTION 1
+string str_H1 = argv[1];
+from_string<int>(H1,str_H1,dec);
+
+// RESOLUTION 2
+string str_H2 = argv[2];
+from_string<int>(H2,str_H2,dec);
+
+// RESOLUTION 3
+string str_H3 = argv[3];
+from_string<int>(H3,str_H3,dec);
+
+V_TOT = H1*H2;
+N_TOT = H1*H2*H3;
+cH=min(H1,H2);
+cH=min(cH,H3);
+
+// CONTRASTE
+string str_cont = argv[4];
+from_string<R>(cont,str_cont,dec);
+
+// NOMBRE DE SPHERES
+NB_SPH=1;
+cout<<"Nombre de spheres : "<<NB_SPH<<endl;
+
+// ALLOCATION DYNAMIQUE
+allocat_memory_elas3D();
+
+// LECTURE DE LA GRILLE
+//readVTK3(H1,H2,H3,PR_INC,LIST_N,filename1);
+
+// GENERATION DE LA GRILLE
+gener3_sphere_alea(NB_SPH,N_TOT,V_TOT,H1,H2,H3,LIST_N,LIST_R,LIST_X,LIST_Y,LIST_Z);
+treat_per3(H1,H2,H3,LIST_N);
+
+// COMPACITE
+eval_fv(PR_INC, N_TOT, LIST_N);
+pC=PR_INC;
+cout<<"Pourcentage d inclusions après traitement: "<<PR_INC<<endl;
+
+// REPERAGE CONTOURS
+int N_QUA;
+int IN=1;
+int OUT=0;
+
+// Search surf
+search_surf(N_QUA,LIST_N,H1,H2,H3,IN,OUT);
+nQ=N_QUA;
+
+// Treat surf
+treat_surf(N_QUA,LIST_N,LIST_Q,LIST_V,H1,H2,H3,IN,OUT);
+
+expVTK3(LIST_N,H1,H2,H3,N_TOT,PR_INC);
+
+/////////////////////////////////////////////////////
+// HOMOGENEISATION
+
+// Caractéristiques matériaux
+// Matrice
+
+R Y  = 1.;
+cout <<"Module de Young de la matrice : "<<Y<<endl;
+R nu = 0.35;
+cout <<"Coefficient de Poisson de la matrice : "<<nu<<endl;
+R G  = Y/(2.*(1+nu));
+cout <<"Module de cisaillement de la matrice : "<<G<<endl<<endl;
+
+R C0[6][6];R C1[6][6];R C2[6][6];
+R C1pC0[6][6];R C2pC0[6][6];
+R C1mC0[6][6];R C2mC0[6][6];
+R iC1[6][6];R iC2[6][6];
+R iC1_C0[6][6];R iC2_C0[6][6];
+
+for(int i=0;i<6;i++){
+  for(int j=0;j<6;j++){
+    C0[i][j] = 0.;
+    C1[i][j] = 0.;
+    C2[i][j] = 0.;
+    iC1[i][j] = 0.;
+    iC2[i][j] = 0.;   
+    iC1_C0[i][j] = 0.;
+    iC2_C0[i][j] = 0.;      
+    C1pC0[i][j] = 0.;
+    C2pC0[i][j] = 0.;    
+    C1mC0[i][j] = 0.;
+    C2mC0[i][j] = 0.;        
+  }
+}
+
+C1[0][0] = Y*(1-nu)/((1-2*nu)*(1+nu));
+C1[0][1] = (nu*Y)/((1-2*nu)*(1+nu));
+C1[1][0] = C1[0][1];
+C1[1][1] = C1[0][0];
+C1[2][1] = C1[0][1];
+C1[2][0] = C1[2][1];
+C1[0][2] = C1[2][1];
+C1[1][2] = C1[2][1];
+C1[2][2] = C1[0][0];
+C1[3][3] = 2.*G;
+C1[4][4] = 2.*G;
+C1[5][5] = 2.*G;
+
+
+R K1=(C1[0][0]+C1[0][1]+C1[0][2]+C1[1][0]+C1[1][1]+C1[1][2]+C1[2][0]+C1[2][1]+C1[2][2])/9.;
+
+// inclusion 
+
+R E1   = cont;
+cout <<"Module de Young de l'inclusion : "<<E1<<endl;
+R NU1  = 0.35 ; 
+cout <<"Coefficient de Poisson de l'inclusion : "<<NU1<<endl;
+R G12  = E1/(2.*(1+NU1));
+cout  <<"Module de cisaillement de l'inclusion : "<<G12<<endl;
+
+C2[0][0] = E1*(1-NU1)/((1-2*NU1)*(1+NU1));
+C2[0][1] = (NU1*E1)/((1-2*NU1)*(1+NU1));
+C2[1][0] = C2[0][1];
+C2[1][1] = C2[0][0];
+C2[2][1] = C2[0][1];
+C2[2][0] = C2[2][1];
+C2[0][2] = C2[2][1];
+C2[1][2] = C2[2][1];
+C2[2][2] = C2[0][0];
+C2[3][3] = 2.*G12;
+C2[4][4] = 2.*G12;
+C2[5][5] = 2.*G12;
+
+R K2=(C2[0][0]+C2[0][1]+C2[0][2]+C2[1][0]+C2[1][1]+C2[1][2]+C2[2][0]+C2[2][1]+C2[2][2])/9.;
+
+//milieu 0
+
+R G0 =-sqrt(G12*G);
+R K0 =-sqrt(K1*K2);
+
+C0[0][0]=K0+4./3*G0;
+C0[0][1]=K0-2./3*G0;
+C0[0][2]=K0-2./3*G0;
+C0[1][0]=K0-2./3*G0;
+C0[1][1]=K0+4./3*G0;
+C0[1][2]=K0-2./3*G0;
+C0[2][0]=K0-2./3*G0;
+C0[2][1]=K0-2./3*G0;
+C0[2][2]=K0+4./3*G0;
+C0[3][3]=2.*G0;
+C0[4][4]=2.*G0;
+C0[5][5]=2.*G0;
+
+//c1mc0
+
+C1mC0[0][0]=C1[0][0]-C0[0][0];
+C1mC0[0][1]=C1[0][1]-C0[0][1];
+C1mC0[0][2]=C1[0][2]-C0[0][2];
+C1mC0[1][0]=C1[1][0]-C0[1][0];
+C1mC0[1][1]=C1[1][1]-C0[1][1];
+C1mC0[1][2]=C1[1][2]-C0[1][2];
+C1mC0[2][0]=C1[2][0]-C0[2][0];
+C1mC0[2][1]=C1[2][1]-C0[2][1];
+C1mC0[2][2]=C1[2][2]-C0[2][2];
+C1mC0[3][3]=C1[3][3]-C0[3][3];
+C1mC0[4][4]=C1[4][4]-C0[4][4];
+C1mC0[5][5]=C1[5][5]-C0[5][5];
+
+
+
+//c1pc0
+
+C1pC0[0][0]=C1[0][0]+C0[0][0];
+C1pC0[0][1]=C1[0][1]+C0[0][1];
+C1pC0[0][2]=C1[0][2]+C0[0][2];
+C1pC0[1][0]=C1[1][0]+C0[1][0];
+C1pC0[1][1]=C1[1][1]+C0[1][1];
+C1pC0[1][2]=C1[1][2]+C0[1][2];
+C1pC0[2][0]=C1[2][0]+C0[2][0];
+C1pC0[2][1]=C1[2][1]+C0[2][1];
+C1pC0[2][2]=C1[2][2]+C0[2][2];
+C1pC0[3][3]=C1[3][3]+C0[3][3];
+C1pC0[4][4]=C1[4][4]+C0[4][4];
+C1pC0[5][5]=C1[5][5]+C0[5][5];
+
+//c2mc0
+
+C2mC0[0][0]=C2[0][0]-C0[0][0];
+C2mC0[0][1]=C2[0][1]-C0[0][1];
+C2mC0[0][2]=C2[0][2]-C0[0][2];
+C2mC0[1][0]=C2[1][0]-C0[1][0];
+C2mC0[1][1]=C2[1][1]-C0[1][1];
+C2mC0[1][2]=C2[1][2]-C0[1][2];
+C2mC0[2][0]=C2[2][0]-C0[2][0];
+C2mC0[2][1]=C2[2][1]-C0[2][1];
+C2mC0[2][2]=C2[2][2]-C0[2][2];
+C2mC0[3][3]=C2[3][3]-C0[3][3];
+C2mC0[4][4]=C2[4][4]-C0[4][4];
+C2mC0[5][5]=C2[5][5]-C0[5][5];
+
+
+//c2pc0
+
+C2pC0[0][0]=C2[0][0]+C0[0][0];
+C2pC0[0][1]=C2[0][1]+C0[0][1];
+C2pC0[0][2]=C2[0][2]+C0[0][2];
+C2pC0[1][0]=C2[1][0]+C0[1][0];
+C2pC0[1][1]=C2[1][1]+C0[1][1];
+C2pC0[1][2]=C2[1][2]+C0[1][2];
+C2pC0[2][0]=C2[2][0]+C0[2][0];
+C2pC0[2][1]=C2[2][1]+C0[2][1];
+C2pC0[2][2]=C2[2][2]+C0[2][2];
+C2pC0[3][3]=C2[3][3]+C0[3][3];
+C2pC0[4][4]=C2[4][4]+C0[4][4];
+C2pC0[5][5]=C2[5][5]+C0[5][5];
+
+R det1;
+R det2;
+
+det1=C1mC0[0][0]*(C1mC0[1][1]*C1mC0[2][2]-C1mC0[1][2]*C1mC0[2][1]);
+det1-=(C1mC0[1][0]*(C1mC0[0][1]*C1mC0[2][2]-C1mC0[0][2]*C1mC0[2][1]));
+det1+=(C1mC0[2][0]*(C1mC0[0][1]*C1mC0[1][2]-C1mC0[0][2]*C1mC0[1][1]));
+
+iC1[0][0]=2.*(C1mC0[1][1]*C1mC0[2][2]-C1mC0[1][2]*C1mC0[2][1])/det1;
+iC1[0][1]=-2.*(C1mC0[0][1]*C1mC0[2][2]-C1mC0[0][2]*C1mC0[2][1])/det1;
+iC1[0][2]=2.*(C1mC0[0][1]*C1mC0[1][2]-C1mC0[0][2]*C1mC0[1][1])/det1;
+iC1[1][0]=-2.*(C1mC0[1][0]*C1mC0[2][2]-C1mC0[2][0]*C1mC0[1][2])/det1;
+iC1[1][1]=2.*(C1mC0[0][0]*C1mC0[2][2]-C1mC0[2][0]*C1mC0[0][2])/det1;
+iC1[1][2]=-2.*(C1mC0[0][0]*C1mC0[1][2]-C1mC0[1][0]*C1mC0[0][2])/det1;
+iC1[2][0]=2.*(C1mC0[1][0]*C1mC0[2][1]-C1mC0[2][0]*C1mC0[1][1])/det1;
+iC1[2][1]=-2.*(C1mC0[0][0]*C1mC0[2][1]-C1mC0[2][0]*C1mC0[0][1])/det1;  
+iC1[2][2]=2.*(C1mC0[0][0]*C1mC0[1][1]-C1mC0[1][0]*C1mC0[0][1])/det1; 
+
+iC1_C0[0][0]=iC1[0][0]*C0[0][0]+iC1[0][1]*C0[1][0]+iC1[0][2]*C0[2][0];
+iC1_C0[0][1]=iC1[0][0]*C0[0][1]+iC1[0][1]*C0[1][1]+iC1[0][2]*C0[2][1];
+iC1_C0[0][2]=iC1[0][0]*C0[0][2]+iC1[0][1]*C0[1][2]+iC1[0][2]*C0[2][2];
+iC1_C0[1][0]=iC1[1][0]*C0[0][0]+iC1[1][1]*C0[1][0]+iC1[1][2]*C0[2][0];
+iC1_C0[1][1]=iC1[1][0]*C0[0][1]+iC1[1][1]*C0[1][1]+iC1[1][2]*C0[2][1];
+iC1_C0[1][2]=iC1[1][0]*C0[0][2]+iC1[1][1]*C0[1][2]+iC1[1][2]*C0[2][2];
+iC1_C0[2][0]=iC1[2][0]*C0[0][0]+iC1[2][1]*C0[1][0]+iC1[2][2]*C0[2][0];
+iC1_C0[2][1]=iC1[2][0]*C0[0][1]+iC1[2][1]*C0[1][1]+iC1[2][2]*C0[2][1]; 
+iC1_C0[2][2]=iC1[2][0]*C0[0][2]+iC1[2][1]*C0[1][2]+iC1[2][2]*C0[2][2];
+iC1_C0[3][3]=2./C1mC0[3][3]*C0[3][3];
+iC1_C0[4][4]=2./C1mC0[4][4]*C0[4][4];
+iC1_C0[5][5]=2./C1mC0[5][5]*C0[5][5];
+
+det2=C2mC0[0][0]*(C2mC0[1][1]*C2mC0[2][2]-C2mC0[1][2]*C2mC0[2][1]);
+det2-=(C2mC0[1][0]*(C2mC0[0][1]*C2mC0[2][2]-C2mC0[0][2]*C2mC0[2][1]));
+det2+=(C2mC0[2][0]*(C2mC0[0][1]*C2mC0[1][2]-C2mC0[0][2]*C2mC0[1][1]));
+
+iC2[0][0]=2.*(C2mC0[1][1]*C2mC0[2][2]-C2mC0[1][2]*C2mC0[2][1])/det2;
+iC2[0][1]=-2.*(C2mC0[0][1]*C2mC0[2][2]-C2mC0[0][2]*C2mC0[2][1])/det2;
+iC2[0][2]=2.*(C2mC0[0][1]*C2mC0[1][2]-C2mC0[0][2]*C2mC0[1][1])/det2;
+iC2[1][0]=-2.*(C2mC0[1][0]*C2mC0[2][2]-C2mC0[2][0]*C2mC0[1][2])/det2;
+iC2[1][1]=2.*(C2mC0[0][0]*C2mC0[2][2]-C2mC0[2][0]*C2mC0[0][2])/det2;
+iC2[1][2]=-2.*(C2mC0[0][0]*C2mC0[1][2]-C2mC0[1][0]*C2mC0[0][2])/det2;
+iC2[2][0]=2.*(C2mC0[1][0]*C2mC0[2][1]-C2mC0[2][0]*C2mC0[1][1])/det2;
+iC2[2][1]=-2.*(C2mC0[0][0]*C2mC0[2][1]-C2mC0[2][0]*C2mC0[0][1])/det2;  
+iC2[2][2]=2.*(C2mC0[0][0]*C2mC0[1][1]-C2mC0[1][0]*C2mC0[0][1])/det2; 
+
+iC2_C0[0][0]=iC2[0][0]*C0[0][0]+iC2[0][1]*C0[1][0]+iC2[0][2]*C0[2][0];
+iC2_C0[0][1]=iC2[0][0]*C0[0][1]+iC2[0][1]*C0[1][1]+iC2[0][2]*C0[2][1];
+iC2_C0[0][2]=iC2[0][0]*C0[0][2]+iC2[0][1]*C0[1][2]+iC2[0][2]*C0[2][2];
+iC2_C0[1][0]=iC2[1][0]*C0[0][0]+iC2[1][1]*C0[1][0]+iC2[1][2]*C0[2][0];
+iC2_C0[1][1]=iC2[1][0]*C0[0][1]+iC2[1][1]*C0[1][1]+iC2[1][2]*C0[2][1];
+iC2_C0[1][2]=iC2[1][0]*C0[0][2]+iC2[1][1]*C0[1][2]+iC2[1][2]*C0[2][2];
+iC2_C0[2][0]=iC2[2][0]*C0[0][0]+iC2[2][1]*C0[1][0]+iC2[2][2]*C0[2][0];
+iC2_C0[2][1]=iC2[2][0]*C0[0][1]+iC2[2][1]*C0[1][1]+iC2[2][2]*C0[2][1]; 
+iC2_C0[2][2]=iC2[2][0]*C0[0][2]+iC2[2][1]*C0[1][2]+iC2[2][2]*C0[2][2];
+iC2_C0[3][3]=2./C2mC0[3][3]*C0[3][3];
+iC2_C0[4][4]=2./C2mC0[4][4]*C0[4][4];
+iC2_C0[5][5]=2./C2mC0[5][5]*C0[5][5];
+
+// Résolution fft3
+R sigma11[6];
+R sigma22[6];
+R sigma33[6];
+R sigma23[6];
+R sigma13[6];
+R sigma12[6];
+
+reso_fft3_elas_ctr(LIST_N,LIST_SXX,H1,H2,H3,N_TOT,G0,K0,C1,C2,C1pC0,C2pC0,iC1_C0,iC2_C0, sigma11,1,1,minsxx,maxsxx);
+reso_fft3_elas_ctr(LIST_N,LIST_SYY,H1,H2,H3,N_TOT,G0,K0,C1,C2,C1pC0,C2pC0,iC1_C0,iC2_C0, sigma22,2,2,minsyy,maxsyy);
+reso_fft3_elas_ctr(LIST_N,LIST_SZZ,H1,H2,H3,N_TOT,G0,K0,C1,C2,C1pC0,C2pC0,iC1_C0,iC2_C0, sigma33,3,3,minszz,maxszz);
+reso_fft3_elas_ctr(LIST_N,LIST_SYZ,H1,H2,H3,N_TOT,G0,K0,C1,C2,C1pC0,C2pC0,iC1_C0,iC2_C0, sigma23,4,4,minsyz,maxsyz);
+reso_fft3_elas_ctr(LIST_N,LIST_SXZ,H1,H2,H3,N_TOT,G0,K0,C1,C2,C1pC0,C2pC0,iC1_C0,iC2_C0, sigma13,5,5,minsxz,maxsxz);
+reso_fft3_elas_ctr(LIST_N,LIST_SXY,H1,H2,H3,N_TOT,G0,K0,C1,C2,C1pC0,C2pC0,iC1_C0,iC2_C0, sigma12,6,6,minsxy,maxsxy);
+/*
+reso_fft3_elas_dpct(LIST_N,LIST_UX,H1,H2,H3,N_TOT,G0,K0,C1,C2,C1pC0,C2pC0,iC1_C0,iC2_C0, sigma11,1,minux,maxux);
+reso_fft3_elas_dpct(LIST_N,LIST_UY,H1,H2,H3,N_TOT,G0,K0,C1,C2,C1pC0,C2pC0,iC1_C0,iC2_C0, sigma22,2,minuy,maxuy);
+reso_fft3_elas_dpct(LIST_N,LIST_UZ,H1,H2,H3,N_TOT,G0,K0,C1,C2,C1pC0,C2pC0,iC1_C0,iC2_C0, sigma33,3,minuz,maxuz);
+*/
+
+R ssig[3][3];
+R Sijkl[3][3];
+R issig[3][3];
+R eeps[3][3];
+
+ssig[0][0]=sigma11[0];ssig[1][0]=sigma11[1];ssig[2][0]=sigma11[2];
+ssig[0][1]=sigma22[0];ssig[1][1]=sigma22[1];ssig[2][1]=sigma22[2];
+ssig[0][2]=sigma33[0];ssig[1][2]=sigma33[1];ssig[2][2]=sigma33[2];
+
+eeps[0][0]=1.;eeps[1][0]=0.;eeps[2][0]=0.;
+eeps[0][1]=0.;eeps[1][1]=1.;eeps[2][1]=0.;
+eeps[0][2]=0.;eeps[1][2]=0.;eeps[2][2]=1.;
+
+R dets;
+dets=ssig[0][0]*(ssig[1][1]*ssig[2][2]-ssig[1][2]*ssig[2][1]);
+dets-=(ssig[1][0]*(ssig[0][1]*ssig[2][2]-ssig[0][2]*ssig[2][1]));
+dets+=(ssig[2][0]*(ssig[0][1]*ssig[1][2]-ssig[0][2]*ssig[1][1]));
+
+issig[0][0]=(ssig[1][1]*ssig[2][2]-ssig[1][2]*ssig[2][1])/dets;
+issig[0][1]=-(ssig[0][1]*ssig[2][2]-ssig[0][2]*ssig[2][1])/dets;
+issig[0][2]=(ssig[0][1]*ssig[1][2]-ssig[0][2]*ssig[1][1])/dets;
+issig[1][0]=-(ssig[1][0]*ssig[2][2]-ssig[2][0]*ssig[1][2])/dets;
+issig[1][1]=(ssig[0][0]*ssig[2][2]-ssig[2][0]*ssig[0][2])/dets;
+issig[1][2]=-(ssig[0][0]*ssig[1][2]-ssig[1][0]*ssig[0][2])/dets;
+issig[2][0]=(ssig[1][0]*ssig[2][1]-ssig[2][0]*ssig[1][1])/dets;
+issig[2][1]=-(ssig[0][0]*ssig[2][1]-ssig[2][0]*ssig[0][1])/dets;  
+issig[2][2]=(ssig[0][0]*ssig[1][1]-ssig[1][0]*ssig[0][1])/dets; 
+
+Sijkl[0][0]=issig[0][0]*eeps[0][0]+issig[0][1]*eeps[1][0]+issig[0][2]*eeps[2][0];
+Sijkl[0][1]=issig[0][0]*eeps[0][1]+issig[0][1]*eeps[1][1]+issig[0][2]*eeps[2][1];
+Sijkl[0][2]=issig[0][0]*eeps[0][2]+issig[0][1]*eeps[1][2]+issig[0][2]*eeps[2][2];
+Sijkl[1][0]=issig[1][0]*eeps[0][0]+issig[1][1]*eeps[1][0]+issig[1][2]*eeps[2][0];
+Sijkl[1][1]=issig[1][0]*eeps[0][1]+issig[1][1]*eeps[1][1]+issig[1][2]*eeps[2][1];
+Sijkl[1][2]=issig[1][0]*eeps[0][2]+issig[1][1]*eeps[1][2]+issig[1][2]*eeps[2][2];
+Sijkl[2][0]=issig[2][0]*eeps[0][0]+issig[2][1]*eeps[1][0]+issig[2][2]*eeps[2][0];
+Sijkl[2][1]=issig[2][0]*eeps[0][1]+issig[2][1]*eeps[1][1]+issig[2][2]*eeps[2][1]; 
+Sijkl[2][2]=issig[2][0]*eeps[0][2]+issig[2][1]*eeps[1][2]+issig[2][2]*eeps[2][2];
+
+R S2323= 1./sigma23[3];
+R S1313= 1./sigma13[4];
+R S1212= 1./sigma12[5];
+
+R GG= ((1./S1212)+(1./S1313)+(1./S2323))/6.;
+R EE= ((1./Sijkl[0][0])+(1./Sijkl[1][1])+(1./Sijkl[2][2]))/3.;
+R NNU= (-Sijkl[1][0]/Sijkl[0][0]-Sijkl[2][0]/Sijkl[0][0]-Sijkl[2][1]/Sijkl[1][1]-Sijkl[0][1]/Sijkl[1][1]-Sijkl[0][2]/Sijkl[2][2]-Sijkl[1][2]/Sijkl[2][2])/6.;
+
+cout<<"G :"<<GG<<endl;
+cout<<"E :"<<EE<<endl;
+cout<<"NU :"<<NNU<<endl;
+
+R t2=CPUtime()-t1;
+cout<<"Temps de calcul CPU : "<<t2<<endl;
+
+// VISU
+
+view_init3(argc,argv);
+view_micro3_surf();
+view_micro3_sxx(1,cH/2);
+view_micro3_syy(1,cH/2);
+view_micro3_szz(1,cH/2);
+//view_micro3_ux(1,cH/2);
+
+// LIBERATION MEMOIRE
+free_memory_elas3D();
+
+return 1;
+}
